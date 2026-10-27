@@ -292,35 +292,83 @@ if uploaded_file is not None:
 
 # --- Cadence Input Section ---
 st.subheader("Cadence input")
-cadence_source = st.selectbox("Cadence source", ["Phone (Phyphox)", "Simulated Test"])
-phyphox_url = st.text_input(
-    "Phyphox Remote Access URL",
-    value="",
-    placeholder="Paste the URL shown in Phyphox Remote Access",
-    help=(
-        "In the Phyphox app, open the experiment menu (⋮) → Remote Access, "
-        "then paste the displayed URL here."
-    ),
+cadence_source = st.radio(
+    "Playback control",
+    ["Phone (Phyphox)", "Manual"],
+    horizontal=True,
+    key="cadence_source",
 )
+if "last_cadence_source" not in st.session_state:
+    st.session_state.last_cadence_source = cadence_source
+elif st.session_state.last_cadence_source != cadence_source:
+    st.session_state.is_running = False
+    st.session_state.spm = 0.0
+    st.session_state.step_count = 0
+    st.session_state.step_event_times = []
+    st.session_state.step_detector_state = None
+    st.session_state.last_accel_sample_time = None
+    st.session_state.step_interval_history = []
+    st.session_state.last_step_at_monotonic = None
+    st.session_state.filtered_cadence_hz = None
+    st.session_state.last_phone_measurement = None
+    st.session_state.cadence_plot_history = []
+    st.session_state.last_cadence_source = cadence_source
+
+if cadence_source == "Phone (Phyphox)":
+    phyphox_code = st.text_input(
+        "Phyphox Remote Access URL",
+        value="10.68.255.20",
+        placeholder="Paste the code xxx.xxx.xxx.xxx shown in Phyphox Remote Access",
+        help=(
+            "In the Phyphox app, open the experiment menu (⋮) → Remote Access, "
+            "then paste the displayed URL here."
+        ),
+    )
+    phyphox_url = f"http://{phyphox_code}"
+else:
+    manual_speed_ratio = st.slider(
+        "Manual playback speed (×)",
+        min_value=0.75,
+        max_value=1.40,
+        value=1.0,
+        step=0.01,
+        help="Adjust the music speed directly to test playback without Phyphox.",
+    )
 
 # --- Display Metrics ---
 st.markdown("---")
 
 # --- Control Button ---
-if st.button("Start walking" if not st.session_state.is_running else "Stop"):
-    st.session_state.is_running = not st.session_state.is_running
-    if st.session_state.is_running:
-        st.session_state.step_count = 0
-        st.session_state.step_event_times = []
-        st.session_state.step_detector_state = None
-        st.session_state.last_accel_sample_time = None
-        st.session_state.step_interval_history = []
-        st.session_state.last_step_at_monotonic = None
-        st.session_state.filtered_cadence_hz = None
-        st.session_state.last_phone_measurement = None
-        st.session_state.step_source_url = phyphox_url.rstrip("/")
-        st.session_state.cadence_plot_history = []
-    st.rerun()
+if cadence_source == "Phone (Phyphox)":
+    if st.button("Start walking" if not st.session_state.is_running else "Stop"):
+        st.session_state.is_running = not st.session_state.is_running
+        if st.session_state.is_running:
+            st.session_state.step_count = 0
+            st.session_state.step_event_times = []
+            st.session_state.step_detector_state = None
+            st.session_state.last_accel_sample_time = None
+            st.session_state.step_interval_history = []
+            st.session_state.last_step_at_monotonic = None
+            st.session_state.filtered_cadence_hz = None
+            st.session_state.last_phone_measurement = None
+            st.session_state.step_source_url = phyphox_url.rstrip("/")
+            st.session_state.cadence_plot_history = []
+        st.rerun()
+
+
+def display_playback_speed(speed_ratio, base_bpm):
+    target_bpm = round(base_bpm * speed_ratio)
+    _PLAYBACK_RATE_BRIDGE(
+        data={"rate": float(speed_ratio)},
+        key="stepsync_playback_rate_bridge",
+        height=1,
+    )
+    st.markdown(
+        f"<h1 style='text-align: center; font-size: clamp(2rem, 7vw, 3.5rem);'>"
+        f"Speed x{speed_ratio:.2f} → {target_bpm} BPM</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Pitch preserved where supported by your browser.")
 
 # --- Live Fetch & Calculation Logic ---
 @st.fragment(run_every="0.5s")
@@ -563,12 +611,6 @@ def live_metrics(phyphox_url, base_bpm):
         if has_recent_valid_cadence
         else 1.0
     )
-    target_bpm = base_bpm * speed_ratio
-    _PLAYBACK_RATE_BRIDGE(
-        data={"rate": float(speed_ratio)},
-        key="stepsync_playback_rate_bridge",
-        height=1,
-    )
 
     # Update UI metrics
     step_count_column, cadence_column = st.columns(2)
@@ -577,17 +619,13 @@ def live_metrics(phyphox_url, base_bpm):
         "Current cadence",
         f"{current_spm:.0f} SPM" if filtered_cadence_hz is not None else "Rest / waiting",
     )
-    st.markdown(
-        f"<h1 style='text-align: center;'>{int(current_spm)} SPM</h1>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"<p style='text-align: center;'>"
-        f"speed x{speed_ratio:.2f} → {int(target_bpm)} BPM (pitch preserved)"
-        f"{latest_frequency_text}</p>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("Live values from the Phyphox phone", expanded=True):
+    display_playback_speed(speed_ratio, base_bpm)
+    if latest_frequency_text:
+        st.markdown(
+            f"<p style='text-align: center;'>{latest_frequency_text.removeprefix('<br>')}</p>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("Live values from the Phyphox phone", expanded=False):
         st.caption(
             "Step count comes from local peaks in the time-domain accelerometer "
             "magnitude (X/Y/Z), with a gravity baseline removed and a minimum "
@@ -703,14 +741,15 @@ def live_metrics(phyphox_url, base_bpm):
         st.caption("Resting or waiting for a valid peak; music speed is normal (1.0×).")
 
 
-if st.session_state.is_running:
+if cadence_source == "Manual":
+    display_playback_speed(manual_speed_ratio, base_bpm)
+    st.caption("Manual mode is active; Phyphox polling and step counting are off.")
+elif st.session_state.is_running:
     live_metrics(phyphox_url, base_bpm)
 else:
+    display_playback_speed(1.0, base_bpm)
     st.metric("Steps detected", st.session_state.step_count)
-    st.markdown(
-        f"<h1 style='text-align: center;'>{int(st.session_state.spm)} SPM</h1>",
-        unsafe_allow_html=True,
-    )
+    st.metric("Current cadence", "Rest / waiting")
     st.markdown(
         "<p style='text-align: center;'>Click 'Start walking' to begin streaming cadence.</p>",
         unsafe_allow_html=True,

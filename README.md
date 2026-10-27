@@ -3,10 +3,12 @@ pip install streamlit requests numpy
 streamlit run app.py
 
 Upload an MP3, WAV, or M4A track, set its original tempo (defaults to 112 BPM),
-and press play in the built-in player. While cadence tracking is active, the
-browser adjusts playback speed from the counted SPM, within 0.75×–1.40×. Pitch
-preservation is enabled where supported by the browser. The browser requires
-the user to start playback manually.
+and press play in the built-in player. The large speed readout shows the current
+playback multiplier and resulting BPM. Choose **Phone (Phyphox)** to adjust
+playback speed from counted SPM, within 0.75×–1.40×, or choose **Manual** to
+adjust the same range with the slider without polling Phyphox. These modes are
+mutually exclusive. Pitch preservation is enabled where supported by the
+browser. The browser requires the user to start playback manually.
 
 The app reads raw X/Y/Z acceleration samples and timestamps from the Phyphox
 Acceleration Spectrum buffers. It estimates acceleration magnitude, removes a
