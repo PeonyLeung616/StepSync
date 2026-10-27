@@ -90,9 +90,10 @@ if "last_step_at_monotonic" not in st.session_state:
 
 MIN_CADENCE_HZ = 0.8
 MAX_CADENCE_HZ = 3.0
+MIN_CADENCE_INTERVALS = 3
 CADENCE_HISTORY_SIZE = 5
 CADENCE_PLOT_HISTORY_SIZE = 300
-INACTIVITY_TIMEOUT_SECONDS = 10.0
+INACTIVITY_TIMEOUT_SECONDS = 15.0
 STEP_PEAK_THRESHOLD_MPS2 = 1.0
 STEP_MIN_INTERVAL_SECONDS = 0.3
 GRAVITY_BASELINE_TIME_CONSTANT_SECONDS = 0.6
@@ -108,7 +109,7 @@ def cadence_from_step_times(step_times):
         for interval in intervals
         if 1 / MAX_CADENCE_HZ <= interval <= 1 / MIN_CADENCE_HZ
     ]
-    if not valid_intervals:
+    if len(valid_intervals) < MIN_CADENCE_INTERVALS:
         return None
 
     return 1 / statistics.median(valid_intervals)
@@ -317,7 +318,7 @@ elif st.session_state.last_cadence_source != cadence_source:
 if cadence_source == "Phone (Phyphox)":
     phyphox_code = st.text_input(
         "Phyphox Remote Access URL",
-        value="10.68.255.20",
+        value="",
         placeholder="Paste the code xxx.xxx.xxx.xxx shown in Phyphox Remote Access",
         help=(
             "In the Phyphox app, open the experiment menu (⋮) → Remote Access, "
@@ -583,23 +584,24 @@ def live_metrics(phyphox_url, base_bpm):
                         + ", ".join(missing_buffers)
                     )
 
-    last_valid_cadence_at = st.session_state.get("last_step_at_monotonic")
+    last_step_at = st.session_state.get("last_step_at_monotonic")
     if (
-        last_valid_cadence_at is not None
-        and time.monotonic() - last_valid_cadence_at >= INACTIVITY_TIMEOUT_SECONDS
+        last_step_at is not None
+        and time.monotonic() - last_step_at >= INACTIVITY_TIMEOUT_SECONDS
     ):
         st.session_state.filtered_cadence_hz = None
         st.session_state.spm = 0.0
         st.session_state.step_event_times = []
         st.session_state.step_interval_history = []
         st.session_state.last_step_at_monotonic = None
+        last_step_at = None
         inactivity_timed_out = True
 
     current_spm = st.session_state.spm
     filtered_cadence_hz = st.session_state.get("filtered_cadence_hz")
     if inactivity_timed_out:
         st.info(
-            f"No valid cadence peak for {INACTIVITY_TIMEOUT_SECONDS:.0f} seconds. "
+            f"No steps detected for {INACTIVITY_TIMEOUT_SECONDS:.0f} seconds. "
             "Cadence reset to rest and music speed returned to 1.0×."
         )
     has_recent_valid_cadence = (
@@ -615,9 +617,15 @@ def live_metrics(phyphox_url, base_bpm):
     # Update UI metrics
     step_count_column, cadence_column = st.columns(2)
     step_count_column.metric("Steps detected", st.session_state.step_count)
+    if filtered_cadence_hz is not None:
+        cadence_display = f"{current_spm:.0f} SPM"
+    elif last_step_at is not None:
+        cadence_display = "Calibrating cadence"
+    else:
+        cadence_display = "Rest / waiting"
     cadence_column.metric(
         "Current cadence",
-        f"{current_spm:.0f} SPM" if filtered_cadence_hz is not None else "Rest / waiting",
+        cadence_display,
     )
     display_playback_speed(speed_ratio, base_bpm)
     if latest_frequency_text:
@@ -630,9 +638,11 @@ def live_metrics(phyphox_url, base_bpm):
             "Step count comes from local peaks in the time-domain accelerometer "
             "magnitude (X/Y/Z), with a gravity baseline removed and a minimum "
             f"{STEP_MIN_INTERVAL_SECONDS:.1f}s interval to prevent double-counts. "
-            f"SPM is calculated from the median of up to {CADENCE_HISTORY_SIZE} "
-            "intervals between those detected step events. The FFT peak is shown "
-            "separately for comparison."
+            f"Playback follows the median of {MIN_CADENCE_INTERVALS} to "
+            f"{CADENCE_HISTORY_SIZE} valid intervals between detected steps, "
+            "so it waits for a few steps before changing speed. Cadence is shown "
+            "as calibrating during this initial period. The FFT peak is "
+            "shown separately for comparison."
         )
         if phone_values:
             frequency_hz = phone_values.get("f0")
@@ -738,7 +748,13 @@ def live_metrics(phyphox_url, base_bpm):
             )
 
     if not has_recent_valid_cadence and not inactivity_timed_out:
-        st.caption("Resting or waiting for a valid peak; music speed is normal (1.0×).")
+        if last_step_at is not None:
+            st.caption(
+                "Collecting steps for the cadence estimate; music stays at normal "
+                "speed until it is ready."
+            )
+        else:
+            st.caption("Waiting for steps; music speed is normal (1.0×).")
 
 
 if cadence_source == "Manual":
